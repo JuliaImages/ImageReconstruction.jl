@@ -6,7 +6,7 @@ using Test
     views = 200
     I = zeros(pixels, pixels)
     I[pixels÷2, pixels÷2] = 1
-    θ = range(0, step=2π/views, length=views)
+    θ = range(0, step = 2π / views, length = views)
     t = -100:100
 
     P = radon(I, θ, t)
