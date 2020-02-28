@@ -1,5 +1,7 @@
 module ImageReconstruction
 
+using FFTW
+
 export radon, iradon
 
 """
@@ -42,6 +44,55 @@ function radon(image::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     end
 
     P
+end
+
+function _ramp_spatial(N::Int, τ)
+    h = zeros(N)
+    N2 = N ÷ 2
+    for i in eachindex(h)
+        n = i - N2 - 1
+        if mod(n, 2) != 0
+            h[i] = -1 / (π * n * τ)^2
+        elseif n == 0
+            h[i] = 1 / (4 * τ^2)
+        end
+    end
+    h
+end
+
+_zero_pad(p::AbstractVector, N::Int) = vcat(p, zeros(N))
+
+function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
+    pixels = 128
+
+    N = length(t)
+    K = length(θ)
+    Npad = nextpow(2, 2 * N - 1)
+    τ = step(t)
+    h = _ramp_spatial(N, τ)
+
+    # filter sinogram
+    Q = similar(sinogram)
+    j = div(N, 2) + 1
+    k = j + N - 1
+    for i in eachindex(θ)
+        Q[:, i] .=
+            τ .*
+            real.(ifft(
+                fft(_zero_pad(sinogram[:, i], Npad - N)) .*
+                fft(_zero_pad(h, Npad - N)),
+            )[j:k])
+    end
+
+    image = zeros(eltype(sinogram), pixels, pixels)
+    for c in CartesianIndices(image)
+        x = c.I[1] - pixels ÷ 2 + 0.5
+        y = c.I[2] - pixels ÷ 2 + 0.5
+        image[i] = sum(θ) do θᵢ
+            t′ = x * cos(θᵢ) + y * sin(θᵢ)
+        end
+    end
+    @. image * π / K
 end
 
 end # module
