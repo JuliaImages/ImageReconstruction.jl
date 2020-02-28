@@ -9,14 +9,14 @@ radon transform
 
 https://en.wikipedia.org/wiki/Radon_transform
 """
-radon
+function radon end
 
 """
 inverse radon transform
 
 https://en.wikipedia.org/wiki/Radon_transform
 """
-iradon
+function iradon end
 
 
 """
@@ -26,20 +26,20 @@ function radon(image::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     P = zeros(eltype(image), length(t), length(θ))
     nr, nc = size(image)
 
-    for i = 1:nr, j = 1:nc
+    for i in 1:nr, j in 1:nc
         x = j - nc / 2 + 0.5
         y = i - nr / 2 + 0.5
         @inbounds for (k, θₖ) in enumerate(θ)
             t′ = x * cos(θₖ) + y * sin(θₖ)
 
-            a = convert(Int, round((t′ - t.start) / step(t) + 1))
+            a = convert(Int, round((t′ - minimum(t)) / step(t) + 1))
 
             (a < 1 || a > length(t)) && continue
             α = abs(t′ - t[a])
             P[a, k] += (1 - α) * image[i, j]
 
             (a > length(t) + 1) && continue
-            P[a+1, k] += α * image[i, j]
+            P[a + 1, k] += α * image[i, j]
         end
     end
 
@@ -62,6 +62,9 @@ end
 
 _zero_pad(p::AbstractVector, N::Int) = vcat(p, zeros(N))
 
+"""
+Inverse radon transform using a ramp filter and a pixel-driven algorithm.
+"""
 function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     pixels = 128
 
@@ -69,33 +72,27 @@ function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     K = length(θ)
     Npad = nextpow(2, 2 * N - 1)
     τ = step(t)
-    h = _ramp_spatial(N, τ)
-
-    # filter sinogram
-    Q = similar(sinogram)
-    j = div(N, 2) + 1
-    k = j + N - 1
-    for i in eachindex(θ)
-        Q[:, i] .=
-            τ .*
-            real.(ifft(
-                fft(_zero_pad(sinogram[:, i], Npad - N)) .* fft(_zero_pad(h, Npad - N)),
-            )[j:k])
-    end
+    ramp = fft(_zero_pad(_ramp_spatial(N, τ), Npad - N))
+    i = div(N, 2) + 1
+    j = i + N - 1
 
     image = zeros(eltype(sinogram), pixels, pixels)
-    for c in CartesianIndices(image)
-        x = c.I[1] - pixels ÷ 2 + 0.5
-        y = c.I[2] - pixels ÷ 2 + 0.5
-        image[c] = sum(
-            begin
-                t′ = x * cos(θᵢ) + y * sin(θᵢ)
-                # linear interpolation
-                a = convert(Int, round((t′ - minimum(t)) / step(t) + 1))
-                α = abs(t′ - t[a])
-                (1 - α) * Q[a, k] + α * Q[a+1, k]
-            end for (k, θᵢ) in enumerate(θ)
-        )
+    Q = Vector{eltype(sinogram)}(undef, N)
+    for (k, θₖ) in enumerate(θ)
+        # filter projection
+        Q[:] .= τ .* real.(ifft(fft(_zero_pad(sinogram[:, k], Npad - N)) .* ramp)[i:j])
+
+        # backproject
+        for c in CartesianIndices(image)
+            x = c.I[2] - pixels ÷ 2 + 0.5
+            y = c.I[1] - pixels ÷ 2 + 0.5
+            t′ = x * cos(θₖ) + y * sin(θₖ)
+            # linear interpolation
+            #   image pixel (x, y) at θₖ is projected on t[z] and t[z+1]
+            z = convert(Int, round((t′ - minimum(t)) / step(t) + 1))
+            α = abs(t′ - t[z])
+            image[c] += (1 - α) * Q[z] + α * Q[z + 1]
+        end
     end
     @. image * π / K
 end
