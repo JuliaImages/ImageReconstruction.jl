@@ -79,8 +79,7 @@ function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
         Q[:, i] .=
             τ .*
             real.(ifft(
-                fft(_zero_pad(sinogram[:, i], Npad - N)) .*
-                fft(_zero_pad(h, Npad - N)),
+                fft(_zero_pad(sinogram[:, i], Npad - N)) .* fft(_zero_pad(h, Npad - N)),
             )[j:k])
     end
 
@@ -88,9 +87,15 @@ function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     for c in CartesianIndices(image)
         x = c.I[1] - pixels ÷ 2 + 0.5
         y = c.I[2] - pixels ÷ 2 + 0.5
-        image[i] = sum(θ) do θᵢ
-            t′ = x * cos(θᵢ) + y * sin(θᵢ)
-        end
+        image[c] = sum(
+            begin
+                t′ = x * cos(θᵢ) + y * sin(θᵢ)
+                # linear interpolation
+                a = convert(Int, round((t′ - minimum(t)) / step(t) + 1))
+                α = abs(t′ - t[a])
+                (1 - α) * Q[a, k] + α * Q[a+1, k]
+            end for (k, θᵢ) in enumerate(θ)
+        )
     end
     @. image * π / K
 end

@@ -1,17 +1,12 @@
 using Documenter, ImageReconstruction
 
 makedocs(;
-    modules=[ImageReconstruction],
-    format=Documenter.HTML(),
-    pages=[
-        "Home" => "index.md",
-    ],
-    repo="https://github.com/kczimm/ImageReconstruction.jl/blob/{commit}{path}#L{line}",
-    sitename="ImageReconstruction.jl",
-    authors="Kevin C. Zimmerman",
-    assets=String[],
+    modules = [ImageReconstruction],
+    format = Documenter.HTML(),
+    pages = ["Home" => "index.md"],
+    repo = "https://github.com/JuliaImages/ImageReconstruction.jl/blob/{commit}{path}#L{line}",
+    sitename = "ImageReconstruction.jl",
+    assets = String[],
 )
 
-deploydocs(;
-    repo="github.com/kczimm/ImageReconstruction.jl",
-)
+deploydocs(; repo = "github.com/JuliaImages/ImageReconstruction.jl")
