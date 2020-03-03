@@ -1,5 +1,7 @@
 module ImageReconstruction
 
+using Base.Threads
+using Interpolations
 using FFTW
 
 export radon, iradon
@@ -26,7 +28,7 @@ function radon(image::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     P = zeros(eltype(image), length(t), length(θ))
     nr, nc = size(image)
 
-    for i in 1:nr, j in 1:nc
+    for i = 1:nr, j = 1:nc
         x = j - nc / 2 + 0.5
         y = i - nr / 2 + 0.5
         @inbounds for (k, θₖ) in enumerate(θ)
@@ -39,7 +41,7 @@ function radon(image::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
             P[a, k] += (1 - α) * image[i, j]
 
             (a > length(t) + 1) && continue
-            P[a + 1, k] += α * image[i, j]
+            P[a+1, k] += α * image[i, j]
         end
     end
 
@@ -78,20 +80,20 @@ function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
 
     image = zeros(eltype(sinogram), pixels, pixels)
     Q = Vector{eltype(sinogram)}(undef, N)
+
     for (k, θₖ) in enumerate(θ)
         # filter projection
-        Q[:] .= τ .* real.(ifft(fft(_zero_pad(sinogram[:, k], Npad - N)) .* ramp)[i:j])
-
+        Q[:] .=
+            τ .*
+            real.(ifft(fft(_zero_pad(view(sinogram, :, k), Npad - N)) .* ramp)[i:j])
+        Qₖ = LinearInterpolation(t, Q)
         # backproject
-        for c in CartesianIndices(image)
+        @inbounds Threads.@threads for c in CartesianIndices(image)
             x = c.I[2] - pixels ÷ 2 + 0.5
             y = c.I[1] - pixels ÷ 2 + 0.5
+            x^2+y^2 ≥ pixels^2/4 && continue
             t′ = x * cos(θₖ) + y * sin(θₖ)
-            # linear interpolation
-            #   image pixel (x, y) at θₖ is projected on t[z] and t[z+1]
-            z = convert(Int, round((t′ - minimum(t)) / step(t) + 1))
-            α = abs(t′ - t[z])
-            image[c] += (1 - α) * Q[z] + α * Q[z + 1]
+            image[c] += Qₖ(t′)
         end
     end
     @. image * π / K
