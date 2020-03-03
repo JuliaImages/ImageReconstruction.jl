@@ -24,5 +24,5 @@ using Statistics
     P = radon(Igt, θ, t)
     I = iradon(P, θ, t)
     diff = I .- Igt
-    @test mean(diff[:]) ≈ 0 atol=1e-4
+    @test mean(diff[:]) ≈ 0 atol=1e-3
 end
