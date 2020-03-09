@@ -14,8 +14,7 @@ using Test
     @test all(P[101, :] .== 1)
 end
 
-using Images: shepp_logan
-using Statistics
+using Images: shepp_logan, sad
 @testset "iradon - shepp logan" begin
     Igt = shepp_logan(128)
     views = 200
@@ -23,6 +22,5 @@ using Statistics
     t = -150:150
     P = radon(Igt, θ, t)
     I = iradon(P, θ, t)
-    diff = I .- Igt
-    @test mean(diff[:]) ≈ 0 atol=1e-3
+	@test sad(I, Igt) < 500
 end

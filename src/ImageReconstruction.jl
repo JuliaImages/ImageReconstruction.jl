@@ -48,10 +48,10 @@ function radon(image::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     P
 end
 
-function _ramp_spatial(N::Int, τ)
-    h = zeros(N)
+function _ramp_spatial(N::Int, τ, Npad::Int=N)
+    h = zeros(Npad)
     N2 = N ÷ 2
-    for i in eachindex(h)
+    for i = 1:N
         n = i - N2 - 1
         if mod(n, 2) != 0
             h[i] = -1 / (π * n * τ)^2
@@ -62,7 +62,6 @@ function _ramp_spatial(N::Int, τ)
     h
 end
 
-_zero_pad(p::AbstractVector, N::Int) = vcat(p, zeros(N))
 
 """
 Inverse radon transform using a ramp filter and a pixel-driven algorithm.
@@ -74,29 +73,42 @@ function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     K = length(θ)
     Npad = nextpow(2, 2 * N - 1)
     τ = step(t)
-    ramp = fft(_zero_pad(_ramp_spatial(N, τ), Npad - N))
+    ramp = fft(_ramp_spatial(N, τ, Npad))
     i = div(N, 2) + 1
     j = i + N - 1
 
-    image = zeros(eltype(sinogram), pixels, pixels)
-    Q = Vector{eltype(sinogram)}(undef, N)
+	T = eltype(sinogram)
+	image = [zeros(T, pixels, pixels) for _ = 1:nthreads()]
+	P′ = [Vector{Complex{T}}(undef, Npad) for _ in 1:nthreads()]
+	Q = [Vector{T}(undef, N) for _ in 1:nthreads()]
 
-    for (k, θₖ) in enumerate(θ)
+	l = SpinLock()
+	@inbounds @threads for (k, θₖ) in collect(enumerate(θ))
+		id = threadid()
+
         # filter projection
-        Q[:] .=
-            τ .*
-            real.(ifft(fft(_zero_pad(view(sinogram, :, k), Npad - N)) .* ramp)[i:j])
-        Qₖ = LinearInterpolation(t, Q)
+		P′[id][1:N] .= sinogram[:, k]
+		P′[id][N+1:end] .= 0
+
+		lock(l) # threading issues with FFTW (#134)?
+		fft!(P′[id])
+		P′[id] .*= ramp
+		ifft!(P′[id])
+		unlock(l)
+		Q[id] .= τ .* real.(@view P′[id][i:j])
+
+		Qₖ = LinearInterpolation(t, Q[id])
+
         # backproject
-        @inbounds Threads.@threads for c in CartesianIndices(image)
+		for c in CartesianIndices(first(image))
             x = c.I[2] - pixels ÷ 2 + 0.5
             y = c.I[1] - pixels ÷ 2 + 0.5
             x^2+y^2 ≥ pixels^2/4 && continue
             t′ = x * cos(θₖ) + y * sin(θₖ)
-            image[c] += Qₖ(t′)
+			image[id][c] += Qₖ(t′)
         end
     end
-    @. image * π / K
+	sum(image) .* π ./ K
 end
 
 end # module
