@@ -7,26 +7,14 @@ using FFTW
 export radon, iradon
 
 """
-radon transform
+    radon(I::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
 
-https://en.wikipedia.org/wiki/Radon_transform
+Radon transform of a image `I` producing a sinogram from view angles `θ` in
+radians and detector sampling `t`.
 """
-function radon end
-
-"""
-inverse radon transform
-
-https://en.wikipedia.org/wiki/Radon_transform
-"""
-function iradon end
-
-
-"""
-Radon transform of an image using a pixel-driven algorithm.
-"""
-function radon(image::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
-    P = zeros(eltype(image), length(t), length(θ))
-    nr, nc = size(image)
+function radon(I::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
+    P = zeros(eltype(I), length(t), length(θ))
+    nr, nc = size(I)
 
     for i = 1:nr, j = 1:nc
         x = j - nc / 2 + 0.5
@@ -38,17 +26,17 @@ function radon(image::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
 
             (a < 1 || a > length(t)) && continue
             α = abs(t′ - t[a])
-            P[a, k] += (1 - α) * image[i, j]
+            P[a, k] += (1 - α) * I[i, j]
 
             (a > length(t) + 1) && continue
-            P[a+1, k] += α * image[i, j]
+            P[a+1, k] += α * I[i, j]
         end
     end
 
     P
 end
 
-function _ramp_spatial(N::Int, τ, Npad::Int=N)
+function _ramp_spatial(N::Int, τ, Npad::Int = N)
     h = zeros(Npad)
     N2 = N ÷ 2
     for i = 1:N
@@ -62,11 +50,13 @@ function _ramp_spatial(N::Int, τ, Npad::Int=N)
     h
 end
 
+"""
+	iradon(P::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
 
+Inverse radon transform of a sinogram `P` with view angles `θ` in radians and
+detector sampling `t` producing an image on a 128x128 matrix.
 """
-Inverse radon transform using a ramp filter and a pixel-driven algorithm.
-"""
-function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
+function iradon(P::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     pixels = 128
 
     N = length(t)
@@ -74,41 +64,44 @@ function iradon(sinogram::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     Npad = nextpow(2, 2 * N - 1)
     τ = step(t)
     ramp = fft(_ramp_spatial(N, τ, Npad))
-    i = div(N, 2) + 1
+    i = N ÷ 2 + 1
     j = i + N - 1
 
-	T = eltype(sinogram)
-	image = [zeros(T, pixels, pixels) for _ = 1:nthreads()]
-	P′ = [Vector{Complex{T}}(undef, Npad) for _ in 1:nthreads()]
-	Q = [Vector{T}(undef, N) for _ in 1:nthreads()]
+    T = eltype(P)
+    image = [zeros(T, pixels, pixels) for _ = 1:nthreads()]
+    P′ = [Vector{Complex{T}}(undef, Npad) for _ = 1:nthreads()]
+    Q = [Vector{T}(undef, N) for _ = 1:nthreads()]
 
-	l = SpinLock()
-	@inbounds @threads for (k, θₖ) in collect(enumerate(θ))
-		id = threadid()
+    l = SpinLock()
+    @inbounds @threads for (k, θₖ) in collect(enumerate(θ))
+        id = threadid()
 
         # filter projection
-		P′[id][1:N] .= sinogram[:, k]
-		P′[id][N+1:end] .= 0
+        P′[id][1:N] .= P[:, k]
+        P′[id][N+1:end] .= 0
 
-		lock(l) # threading issues with FFTW (#134)?
-		fft!(P′[id])
-		P′[id] .*= ramp
-		ifft!(P′[id])
-		unlock(l)
-		Q[id] .= τ .* real.(@view P′[id][i:j])
+        # Need to prevent multiple thread execution during fft/ifft.
+        # double free occurs otherwise.
+        # https://github.com/JuliaMath/FFTW.jl/issues/134
+        lock(l)
+        fft!(P′[id])
+        P′[id] .*= ramp
+        ifft!(P′[id])
+        unlock(l)
+        Q[id] .= τ .* real.(@view P′[id][i:j])
 
-		Qₖ = LinearInterpolation(t, Q[id])
+        Qₖ = LinearInterpolation(t, Q[id])
 
         # backproject
-		for c in CartesianIndices(first(image))
+        for c in CartesianIndices(first(image))
             x = c.I[2] - pixels ÷ 2 + 0.5
             y = c.I[1] - pixels ÷ 2 + 0.5
-            x^2+y^2 ≥ pixels^2/4 && continue
+            x^2 + y^2 ≥ pixels^2 / 4 && continue
             t′ = x * cos(θₖ) + y * sin(θₖ)
-			image[id][c] += Qₖ(t′)
+            image[id][c] += Qₖ(t′)
         end
     end
-	sum(image) .* π ./ K
+    sum(image) .* π ./ K
 end
 
 end # module
