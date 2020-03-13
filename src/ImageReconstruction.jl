@@ -14,11 +14,12 @@ radians and detector sampling `t`.
 """
 function radon(I::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     P = zeros(eltype(I), length(t), length(θ))
-    nr, nc = size(I)
+    ax1, ax2 = axes(I)
 
-    for i = 1:nr, j = 1:nc
-        x = j - nc / 2 + 0.5
-        y = i - nr / 2 + 0.5
+    nax1, nax2 = length(ax1), length(ax2)
+    for j in ax2, i in ax1
+        x = j - nax2 / 2 + 0.5
+        y = i - nax1 / 2 + 0.5
         @inbounds for (k, θₖ) in enumerate(θ)
             t′ = x * cos(θₖ) + y * sin(θₖ)
 
@@ -26,10 +27,12 @@ function radon(I::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
 
             (a < 1 || a > length(t)) && continue
             α = abs(t′ - t[a])
-            P[a, k] += (1 - α) * I[i, j]
+
+            I′ = I[i, j]
+            P[a, k] += (1 - α) * I′
 
             (a > length(t) + 1) && continue
-            P[a+1, k] += α * I[i, j]
+            P[a+1, k] += α * I′
         end
     end
 
@@ -37,17 +40,10 @@ function radon(I::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
 end
 
 function _ramp_spatial(N::Int, τ, Npad::Int = N)
-    h = zeros(Npad)
+    @assert Npad ≥ N
     N2 = N ÷ 2
-    for i = 1:N
-        n = i - N2 - 1
-        if mod(n, 2) != 0
-            h[i] = -1 / (π * n * τ)^2
-        elseif n == 0
-            h[i] = 1 / (4 * τ^2)
-        end
-    end
-    h
+    hval(n) = n == 0 ? 1 / (4*τ^2) : - mod(n, 2)/(π * n * τ)^2
+    [i ≤ N ? hval(i - N2 - 1) : 0. for i = 1:Npad]
 end
 
 """
@@ -68,40 +64,41 @@ function iradon(P::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
     j = i + N - 1
 
     T = eltype(P)
-    image = [zeros(T, pixels, pixels) for _ = 1:nthreads()]
+    I = [zeros(T, pixels, pixels) for _ = 1:nthreads()]
     P′ = [Vector{Complex{T}}(undef, Npad) for _ = 1:nthreads()]
     Q = [Vector{T}(undef, N) for _ = 1:nthreads()]
 
     l = SpinLock()
     @inbounds @threads for (k, θₖ) in collect(enumerate(θ))
         id = threadid()
+        Pid, Qid, Iid = P′[id], Q[id], I[id]
 
         # filter projection
-        P′[id][1:N] .= P[:, k]
-        P′[id][N+1:end] .= 0
+        Pid[1:N] .= P[:, k]
+        Pid[N+1:end] .= 0
 
         # Need to prevent multiple thread execution during fft/ifft.
         # double free occurs otherwise.
         # https://github.com/JuliaMath/FFTW.jl/issues/134
         lock(l)
-        fft!(P′[id])
-        P′[id] .*= ramp
-        ifft!(P′[id])
+        fft!(Pid)
+        Pid .*= ramp
+        ifft!(Pid)
         unlock(l)
-        Q[id] .= τ .* real.(@view P′[id][i:j])
+        Qid .= τ .* real.(@view Pid[i:j])
 
-        Qₖ = LinearInterpolation(t, Q[id])
+        Qₖ = LinearInterpolation(t, Qid)
 
         # backproject
-        for c in CartesianIndices(first(image))
+        for c in CartesianIndices(first(I))
             x = c.I[2] - pixels ÷ 2 + 0.5
             y = c.I[1] - pixels ÷ 2 + 0.5
             x^2 + y^2 ≥ pixels^2 / 4 && continue
             t′ = x * cos(θₖ) + y * sin(θₖ)
-            image[id][c] += Qₖ(t′)
+            Iid[c] += Qₖ(t′)
         end
     end
-    sum(image) .* π ./ K
+    sum(I) .* π ./ K
 end
 
 end # module
