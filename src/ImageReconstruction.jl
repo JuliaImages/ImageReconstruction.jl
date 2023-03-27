@@ -13,30 +13,33 @@ Radon transform of a image `I` producing a sinogram from view angles `θ` in
 radians and detector sampling `t`.
 """
 function radon(I::AbstractMatrix, θ::AbstractRange, t::AbstractRange)
-    P = zeros(eltype(I), length(t), length(θ))
+    Ps = [zeros(eltype(I), length(t), length(θ)) for _ = 1:nthreads()]
     ax1, ax2 = axes(I)
 
     nax1, nax2 = length(ax1), length(ax2)
-    for j in ax2, i in ax1
-        x = j - nax2 / 2 + 0.5
-        y = i - nax1 / 2 + 0.5
-        @inbounds for (k, θₖ) in enumerate(θ)
-            t′ = x * cos(θₖ) + y * sin(θₖ)
+    Threads.@threads for j in ax2
+        for i in ax1
+            tid = threadid()
+            x = j - nax2 / 2 + 0.5
+            y = i - nax1 / 2 + 0.5
+            @inbounds for (k, θₖ) in enumerate(θ)
+                t′ = x * cos(θₖ) + y * sin(θₖ)
 
-            a = convert(Int, round((t′ - minimum(t)) / step(t) + 1))
+                a = convert(Int, round((t′ - minimum(t)) / step(t) + 1))
 
-            (a < 1 || a > length(t)) && continue
-            α = abs(t′ - t[a])
+                (a < 1 || a > length(t)) && continue
+                α = abs(t′ - t[a])
 
-            I′ = I[i, j]
-            P[a, k] += (1 - α) * I′
+                I′ = I[i, j]
+                Ps[tid][a, k] += (1 - α) * I′
 
-            (a > length(t) + 1) && continue
-            P[a+1, k] += α * I′
+                (a > length(t) + 1) && continue
+                Ps[tid][a+1, k] += α * I′
+            end
         end
     end
 
-    P
+    return sum(Ps)
 end
 
 function _ramp_spatial(N::Int, τ, Npad::Int = N)
